@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MultiStack — MultiBoard Tile Stacker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap');
+  :root {
+    --bg: #0e0e0f; --surface: #161618; --border: #2a2a2e;
+    --accent: #ff6b2b; --accent2: #ffb347; --text: #e8e8e8;
+    --muted: #666; --success: #3ddc84;
+    --mono: 'Space Mono', monospace; --display: 'Barlow Condensed', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono); min-height:100vh; overflow-x:hidden; }
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image: linear-gradient(rgba(255,107,43,0.03) 1px,transparent 1px), linear-gradient(90deg,rgba(255,107,43,0.03) 1px,transparent 1px);
+    background-size:40px 40px;
+  }
+  .container { max-width:860px; margin:0 auto; padding:40px 24px 80px; position:relative; z-index:1; }
+  header { margin-bottom:56px; }
+  .logo-row { display:flex; align-items:center; gap:16px; margin-bottom:8px; }
+  .logo-icon { width:48px; height:48px; flex-shrink:0; }
+  h1 { font-family:var(--display); font-size:clamp(2.4rem,6vw,4rem); font-weight:900; letter-spacing:-0.02em; line-height:1; text-transform:uppercase; }
+  h1 span { color:var(--accent); }
+  .subtitle { font-size:0.72rem; color:var(--muted); letter-spacing:0.12em; text-transform:uppercase; margin-top:6px; padding-left:64px; }
+  .steps { display:grid; gap:2px; }
+  .step { background:var(--surface); border:1px solid var(--border); padding:28px 32px; transition:border-color 0.2s; }
+  .step.active { border-color:var(--accent); }
+  .step.done { border-color:var(--success); }
+  .step-header { display:flex; align-items:center; gap:16px; margin-bottom:20px; }
+  .step-num { font-family:var(--display); font-size:3rem; font-weight:900; color:var(--border); line-height:1; transition:color 0.2s; flex-shrink:0; }
+  .step.active .step-num { color:var(--accent); }
+  .step.done .step-num { color:var(--success); }
+  .step-title { font-family:var(--display); font-size:1.1rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); transition:color 0.2s; }
+  .step.active .step-title, .step.done .step-title { color:var(--text); }
+  .dropzone { border:2px dashed var(--border); padding:48px 24px; text-align:center; cursor:pointer; transition:all 0.2s; background:rgba(255,107,43,0.02); }
+  .dropzone:hover, .dropzone.dragover { border-color:var(--accent); background:rgba(255,107,43,0.05); }
+  .drop-icon { font-size:2.5rem; margin-bottom:12px; display:block; }
+  .drop-text { font-size:0.75rem; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; }
+  .drop-text strong { color:var(--accent); font-weight:700; }
+  input[type="file"] { display:none; }
+  .file-info { display:none; align-items:center; gap:16px; padding:16px 20px; background:rgba(61,220,132,0.05); border:1px solid rgba(61,220,132,0.2); }
+  .file-info.visible { display:flex; }
+  .file-info-icon { font-size:1.5rem; }
+  .file-info-name { font-size:0.78rem; color:var(--success); word-break:break-all; }
+  .file-info-meta { font-size:0.65rem; color:var(--muted); margin-top:3px; }
+  .file-clear { margin-left:auto; background:none; border:1px solid var(--border); color:var(--muted); cursor:pointer; padding:4px 10px; font-family:var(--mono); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; transition:all 0.15s; }
+  .file-clear:hover { border-color:var(--accent); color:var(--accent); }
+  .count-control { display:flex; align-items:center; }
+  .count-btn { width:52px; height:52px; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:1.4rem; cursor:pointer; font-family:var(--mono); transition:all 0.15s; flex-shrink:0; }
+  .count-btn:hover { border-color:var(--accent); color:var(--accent); background:rgba(255,107,43,0.05); }
+  .count-btn:disabled { opacity:0.3; cursor:not-allowed; }
+  .count-display { width:80px; height:52px; background:var(--surface); border:1px solid var(--border); border-left:none; border-right:none; color:var(--accent); font-family:var(--display); font-size:2rem; font-weight:900; text-align:center; display:flex; align-items:center; justify-content:center; }
+  .count-label { margin-left:20px; font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+  .count-label strong { display:block; font-family:var(--display); font-size:1.2rem; font-weight:700; color:var(--text); margin-top:2px; }
+  .row { display:flex; align-items:center; gap:24px; flex-wrap:wrap; margin-bottom:20px; }
+  .gap-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:4px; }
+  .gap-label { font-size:0.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+  .sm-btn { width:36px; height:36px; background:var(--bg); border:1px solid var(--border); color:var(--text); font-size:1rem; cursor:pointer; font-family:var(--mono); transition:all 0.15s; }
+  .sm-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .sm-display { width:72px; height:36px; background:var(--surface); border:1px solid var(--border); border-left:none; border-right:none; color:var(--accent); font-family:var(--display); font-size:1.1rem; font-weight:900; display:flex; align-items:center; justify-content:center; }
+  .stack-preview { display:flex; align-items:flex-end; gap:4px; height:64px; margin-top:20px; }
+  .preview-tile { width:32px; background:var(--accent); border:1px solid var(--accent2); border-radius:2px; box-shadow:0 0 8px rgba(255,107,43,0.4); transition:all 0.3s; }
+  .generate-btn { width:100%; padding:20px; background:var(--accent); border:none; color:#fff; font-family:var(--display); font-size:1.3rem; font-weight:900; letter-spacing:0.15em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; margin-top:2px; position:relative; overflow:hidden; }
+  .generate-btn::after { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(255,255,255,0.1) 0%,transparent 50%); pointer-events:none; }
+  .generate-btn:hover:not(:disabled) { background:#ff8c50; transform:translateY(-1px); box-shadow:0 8px 24px rgba(255,107,43,0.3); }
+  .generate-btn:disabled { opacity:0.35; cursor:not-allowed; transform:none; }
+  .progress-area { display:none; margin-top:2px; background:var(--surface); border:1px solid var(--border); padding:24px 32px; }
+  .progress-area.visible { display:block; }
+  .progress-label { font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:12px; }
+  .progress-bar-wrap { height:4px; background:var(--border); position:relative; overflow:hidden; }
+  .progress-bar { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); width:0%; transition:width 0.3s; }
+  .progress-status { font-size:0.68rem; color:var(--muted); margin-top:10px; }
+  .log { margin-top:16px; font-size:0.65rem; color:#555; max-height:120px; overflow-y:auto; line-height:1.8; }
+  .log .ok { color:var(--success); } .log .warn { color:var(--accent); } .log .err { color:#ff4444; }
+  .result-area { display:none; margin-top:2px; background:rgba(61,220,132,0.04); border:1px solid rgba(61,220,132,0.25); padding:28px 32px; }
+  .result-area.visible { display:block; }
+  .result-title { font-family:var(--display); font-size:1.4rem; font-weight:900; color:var(--success); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:20px; }
+  .result-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }
+  .stat { background:var(--surface); border:1px solid var(--border); padding:14px 16px; }
+  .stat-label { font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; }
+  .stat-value { font-family:var(--display); font-size:1.5rem; font-weight:700; color:var(--text); }
+  .stat-unit { font-size:0.7rem; color:var(--muted); margin-left:4px; }
+  .download-btn { width:100%; padding:18px; background:transparent; border:2px solid var(--success); color:var(--success); font-family:var(--display); font-size:1.2rem; font-weight:900; letter-spacing:0.15em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; text-decoration:none; display:block; text-align:center; }
+  .download-btn:hover { background:rgba(61,220,132,0.08); box-shadow:0 0 24px rgba(61,220,132,0.2); }
+  .reset-btn { margin-top:12px; width:100%; padding:12px; background:transparent; border:1px solid var(--border); color:var(--muted); font-family:var(--mono); font-size:0.7rem; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.15s; }
+  .reset-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .error-area { display:none; margin-top:2px; background:rgba(255,68,68,0.04); border:1px solid rgba(255,68,68,0.25); padding:20px 24px; font-size:0.75rem; color:#ff6b6b; }
+  .error-area.visible { display:block; }
+  .info-note { margin-top:40px; padding:20px 24px; border-left:3px solid var(--accent); background:rgba(255,107,43,0.04); font-size:0.68rem; color:var(--muted); line-height:1.9; }
+  .info-note strong { color:var(--text); }
+  ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-track { background:var(--surface); } ::-webkit-scrollbar-thumb { background:var(--border); }
+  @media(max-width:600px) { .step { padding:20px; } .result-stats { grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo-row">
+      <svg class="logo-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="30" width="40" height="10" rx="1" fill="#ff6b2b" opacity="0.9"/>
+        <rect x="4" y="19" width="40" height="10" rx="1" fill="#ff6b2b" opacity="0.65"/>
+        <rect x="4" y="8" width="40" height="10" rx="1" fill="#ff6b2b" opacity="0.4"/>
+        <line x1="12" y1="8" x2="12" y2="40" stroke="#ff6b2b" stroke-width="1" opacity="0.3"/>
+        <line x1="24" y1="8" x2="24" y2="40" stroke="#ff6b2b" stroke-width="1" opacity="0.3"/>
+        <line x1="36" y1="8" x2="36" y2="40" stroke="#ff6b2b" stroke-width="1" opacity="0.3"/>
+      </svg>
+      <h1>Multi<span>Stack</span></h1>
+    </div>
+    <div class="subtitle">MultiBoard tile stacker &mdash; upload STL &rarr; open in BambuStudio &rarr; slice &rarr; print</div>
+  </header>
+
+  <div class="steps">
+    <div class="step active" id="step1">
+      <div class="step-header">
+        <div class="step-num">01</div>
+        <div class="step-title">Upload your tile STL</div>
+      </div>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".stl">
+        <span class="drop-icon">📦</span>
+        <div class="drop-text">
+          <strong>Click to browse</strong> or drag &amp; drop<br>
+          Your MultiBoard tile .stl file
+        </div>
+      </div>
+      <div class="file-info" id="fileInfo">
+        <span class="file-info-icon">&#x2705;</span>
+        <div>
+          <div class="file-info-name" id="fileName">&#x2014;</div>
+          <div class="file-info-meta" id="fileMeta">&#x2014;</div>
+        </div>
+        <button class="file-clear" onclick="clearFile()">Remove</button>
+      </div>
+    </div>
+
+    <div class="step" id="step2">
+      <div class="step-header">
+        <div class="step-num">02</div>
+        <div class="step-title">Choose stack settings</div>
+      </div>
+      <div class="row">
+        <div class="count-control">
+          <button class="count-btn" id="btnMinus" onclick="adjustCount(-1)">&#x2212;</button>
+          <div class="count-display" id="countDisplay">2</div>
+          <button class="count-btn" id="btnPlus" onclick="adjustCount(1)">+</button>
+        </div>
+        <div class="count-label">tiles high<strong id="countLabel">2 tiles</strong></div>
+      </div>
+      <div class="gap-row">
+        <div class="gap-label">Inter-tile gap</div>
+        <div style="display:flex;align-items:center">
+          <button class="sm-btn" onclick="adjustGap(-1)">&#x2212;</button>
+          <div class="sm-display" id="gapDisplay">0.20</div>
+          <button class="sm-btn" onclick="adjustGap(1)">+</button>
+        </div>
+        <div style="font-size:0.68rem;color:var(--muted)">mm &nbsp;&mdash;&nbsp; separation gap between tiles (default 0.20mm)</div>
+      </div>
+      <div class="stack-preview" id="stackPreview"></div>
+    </div>
+
+    <div class="step" id="step3">
+      <div class="step-header">
+        <div class="step-num">03</div>
+        <div class="step-title">Generate BambuStudio project</div>
+      </div>
+      <button class="generate-btn" id="generateBtn" onclick="generate()" disabled>
+        &#x25B6; &nbsp; Generate Project
+      </button>
+    </div>
+  </div>
+
+  <div class="progress-area" id="progressArea">
+    <div class="progress-label">Processing&hellip;</div>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="progress-status" id="progressStatus">Initializing&hellip;</div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="error-area" id="errorArea"></div>
+
+  <div class="result-area" id="resultArea">
+    <div class="result-title">&#x2713; Project Ready</div>
+    <div class="result-stats" id="resultStats"></div>
+    <a class="download-btn" id="downloadBtn" href="#">&#x2B07; &nbsp; Download .3mf Project</a>
+    <button class="reset-btn" onclick="resetAll()">Start over with a different file</button>
+  </div>
+
+  <div class="info-note">
+    <strong>Workflow:</strong> Upload your tile STL &rarr; choose stack count &rarr; download .3mf &rarr; open in BambuStudio &rarr; slice &rarr; send to printer.<br><br>
+    <strong>How stacking works:</strong> Each tile is placed directly on top of the previous one with a small gap (default 0.20mm). The printer deposits a single layer of air at each boundary, which is just enough for the tiles to pull apart cleanly when done.<br><br>
+    <strong>Tip:</strong> After opening in BambuStudio, check the plate looks correct before slicing. All tiles should be visible stacked vertically in the preview.
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let uploadedFile = null;
+let stlData = null;       // ArrayBuffer of STL
+let stlInfo = null;       // { name, triangles, bbox, zHeight }
+let stackCount = 2;
+let gapSteps = 1;         // multiples of 0.20mm
+let outputBlob = null;
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setProgress(pct, msg) {
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressStatus').textContent = msg;
+}
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = '› ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+function showError(msg) {
+  const el = document.getElementById('errorArea');
+  el.textContent = '⚠ ' + msg;
+  el.classList.add('visible');
+  document.getElementById('progressArea').classList.remove('visible');
+}
+function updateStepStates() {
+  document.getElementById('step1').className = 'step ' + (uploadedFile ? 'done' : 'active');
+  document.getElementById('step2').className = 'step ' + (uploadedFile ? 'active' : '');
+  document.getElementById('step3').className = 'step ' + (uploadedFile ? 'active' : '');
+  document.getElementById('generateBtn').disabled = !uploadedFile;
+}
+function buildStackPreview() {
+  const c = document.getElementById('stackPreview');
+  c.innerHTML = '';
+  const show = Math.min(stackCount, 10);
+  for (let i = 0; i < show; i++) {
+    const t = document.createElement('div');
+    t.className = 'preview-tile';
+    t.style.height = Math.min(12 + i*2, 56) + 'px';
+    c.appendChild(t);
+  }
+  if (stackCount > 10) {
+    const m = document.createElement('div');
+    m.style.cssText = 'font-size:0.6rem;color:var(--muted);margin-left:8px;align-self:center';
+    m.textContent = '+' + (stackCount-10) + ' more';
+    c.appendChild(m);
+  }
+}
+function adjustCount(d) {
+  stackCount = Math.max(2, Math.min(20, stackCount + d));
+  document.getElementById('countDisplay').textContent = stackCount;
+  document.getElementById('countLabel').textContent = stackCount + ' tiles';
+  document.getElementById('btnMinus').disabled = stackCount <= 2;
+  document.getElementById('btnPlus').disabled = stackCount >= 20;
+  buildStackPreview();
+}
+function adjustGap(d) {
+  gapSteps = Math.max(1, Math.min(5, gapSteps + d));
+  document.getElementById('gapDisplay').textContent = (gapSteps * 0.20).toFixed(2);
+}
+
+// ── File handling ─────────────────────────────────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => { if(e.target.files[0]) handleFile(e.target.files[0]); });
+
+async function handleFile(f) {
+  if (!f.name.toLowerCase().endsWith('.stl')) { showError('Please upload a .stl file.'); return; }
+  uploadedFile = f;
+  stlData = await f.arrayBuffer();
+  stlInfo = parseSTLInfo(stlData);
+  document.getElementById('fileName').textContent = f.name;
+  document.getElementById('fileMeta').textContent =
+    `${stlInfo.triangles.toLocaleString()} triangles  ·  tile height: ${stlInfo.zHeight.toFixed(3)} mm  ·  ${(f.size/1024).toFixed(0)} KB`;
+  document.getElementById('dropzone').style.display = 'none';
+  document.getElementById('fileInfo').classList.add('visible');
+  document.getElementById('errorArea').classList.remove('visible');
+  document.getElementById('resultArea').classList.remove('visible');
+  updateStepStates();
+  buildStackPreview();
+}
+function clearFile() {
+  uploadedFile = null; stlData = null; stlInfo = null;
+  fileInput.value = '';
+  document.getElementById('dropzone').style.display = '';
+  document.getElementById('fileInfo').classList.remove('visible');
+  document.getElementById('errorArea').classList.remove('visible');
+  document.getElementById('resultArea').classList.remove('visible');
+  document.getElementById('progressArea').classList.remove('visible');
+  updateStepStates();
+}
+function resetAll() { clearFile(); outputBlob = null; }
+
+// ── STL Parser ────────────────────────────────────────────────────────────────
+// Returns { triangles, zHeight, bbox:{minX,maxX,minY,maxY,minZ,maxZ}, isBinary }
+function parseSTLInfo(buf) {
+  const bytes = new Uint8Array(buf);
+  // Detect binary vs ASCII: binary starts with 80-byte header then uint32 triangle count
+  // ASCII starts with "solid"
+  const header = String.fromCharCode(...bytes.slice(0, 5));
+  let triangles, minZ=Infinity, maxZ=-Infinity, minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  let isBinary = true;
+
+  if (header === 'solid') {
+    // Could still be binary if the ASCII-looking header is coincidence — check size
+    const binaryCount = new DataView(buf).getUint32(80, true);
+    const expectedSize = 84 + binaryCount * 50;
+    if (Math.abs(expectedSize - buf.byteLength) < 10) {
+      isBinary = true;
+    } else {
+      isBinary = false;
+    }
+  }
+
+  if (isBinary) {
+    const dv = new DataView(buf);
+    triangles = dv.getUint32(80, true);
+    for (let i = 0; i < triangles; i++) {
+      const base = 84 + i * 50;
+      // 3 vertices, each 3 floats (after 3-float normal)
+      for (let v = 0; v < 3; v++) {
+        const vbase = base + 12 + v * 12;
+        const x = dv.getFloat32(vbase, true);
+        const y = dv.getFloat32(vbase+4, true);
+        const z = dv.getFloat32(vbase+8, true);
+        if (x < minX) minX=x; if (x > maxX) maxX=x;
+        if (y < minY) minY=y; if (y > maxY) maxY=y;
+        if (z < minZ) minZ=z; if (z > maxZ) maxZ=z;
+      }
+    }
+  } else {
+    // ASCII STL
+    const text = new TextDecoder().decode(buf);
+    const verts = text.matchAll(/vertex\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)/g);
+    triangles = 0;
+    for (const m of verts) {
+      const x=parseFloat(m[1]), y=parseFloat(m[2]), z=parseFloat(m[3]);
+      if (x < minX) minX=x; if (x > maxX) maxX=x;
+      if (y < minY) minY=y; if (y > maxY) maxY=y;
+      if (z < minZ) minZ=z; if (z > maxZ) maxZ=z;
+      triangles++;
+    }
+    triangles = Math.floor(triangles / 3);
+  }
+
+  return { triangles, isBinary, zHeight: maxZ - minZ,
+    bbox: { minX, maxX, minY, maxY, minZ, maxZ } };
+}
+
+// ── STL → 3MF mesh XML ───────────────────────────────────────────────────────
+// Converts the STL binary data into 3MF <vertices> and <triangles> XML strings
+function stlToMeshXml(buf, isBinary) {
+  const vertices = [];
+  const triangleIdxs = [];
+  // We deduplicate vertices using a map for a smaller file
+  const vertMap = new Map();
+  let vIdx = 0;
+
+  function addVert(x, y, z) {
+    const key = `${x.toFixed(6)},${y.toFixed(6)},${z.toFixed(6)}`;
+    if (vertMap.has(key)) return vertMap.get(key);
+    vertMap.set(key, vIdx);
+    vertices.push([x, y, z]);
+    return vIdx++;
+  }
+
+  if (isBinary) {
+    const dv = new DataView(buf);
+    const tCount = dv.getUint32(80, true);
+    for (let i = 0; i < tCount; i++) {
+      const base = 84 + i * 50;
+      const v0 = addVert(dv.getFloat32(base+12,true), dv.getFloat32(base+16,true), dv.getFloat32(base+20,true));
+      const v1 = addVert(dv.getFloat32(base+24,true), dv.getFloat32(base+28,true), dv.getFloat32(base+32,true));
+      const v2 = addVert(dv.getFloat32(base+36,true), dv.getFloat32(base+40,true), dv.getFloat32(base+44,true));
+      triangleIdxs.push([v0, v1, v2]);
+    }
+  } else {
+    const text = new TextDecoder().decode(buf);
+    const verts = [...text.matchAll(/vertex\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)/g)];
+    for (let i = 0; i < verts.length; i += 3) {
+      if (i+2 >= verts.length) break;
+      const v0 = addVert(parseFloat(verts[i][1]),   parseFloat(verts[i][2]),   parseFloat(verts[i][3]));
+      const v1 = addVert(parseFloat(verts[i+1][1]), parseFloat(verts[i+1][2]), parseFloat(verts[i+1][3]));
+      const v2 = addVert(parseFloat(verts[i+2][1]), parseFloat(verts[i+2][2]), parseFloat(verts[i+2][3]));
+      triangleIdxs.push([v0, v1, v2]);
+    }
+  }
+
+  const vertsXml = vertices.map(([x,y,z]) =>
+    `      <vertex x="${x.toFixed(6)}" y="${y.toFixed(6)}" z="${z.toFixed(6)}"/>`
+  ).join('\n');
+  const trisXml = triangleIdxs.map(([a,b,c]) =>
+    `      <triangle v1="${a}" v2="${b}" v3="${c}"/>`
+  ).join('\n');
+
+  return { vertsXml, trisXml, vertCount: vertices.length, triCount: triangleIdxs.length };
+}
+
+// ── Build BambuStudio project 3MF ────────────────────────────────────────────
+async function generate() {
+  document.getElementById('errorArea').classList.remove('visible');
+  document.getElementById('resultArea').classList.remove('visible');
+  document.getElementById('progressArea').classList.add('visible');
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('generateBtn').disabled = true;
+
+  try {
+    setProgress(5, 'Parsing STL geometry…');
+    log(`File: ${uploadedFile.name}`);
+    log(`Triangles: ${stlInfo.triangles.toLocaleString()}`);
+    log(`Tile height: ${stlInfo.zHeight.toFixed(3)} mm`, 'ok');
+    log(`Bbox Z: ${stlInfo.bbox.minZ.toFixed(3)} → ${stlInfo.bbox.maxZ.toFixed(3)} mm`);
+
+    setProgress(20, 'Converting STL to 3MF mesh…');
+    const { vertsXml, trisXml, vertCount, triCount } = stlToMeshXml(stlData, stlInfo.isBinary);
+    log(`Mesh: ${vertCount} vertices, ${triCount} triangles`, 'ok');
+
+    const gapMm = gapSteps * 0.20;
+    const tileStep = stlInfo.zHeight + gapMm;  // vertical step per tile
+    // Z offset to bring tile bottom to z=0
+    const zFloor = stlInfo.bbox.minZ;
+    // Center tile on Bambu X1C bed (256x256mm)
+    const cx = 128 - (stlInfo.bbox.minX + stlInfo.bbox.maxX) / 2;
+    const cy = 128 - (stlInfo.bbox.minY + stlInfo.bbox.maxY) / 2;
+
+    log(`Gap: ${gapMm.toFixed(2)} mm between tiles`, 'ok');
+    log(`Stack: ${stackCount} tiles, step: ${tileStep.toFixed(3)} mm`);
+    log(`Centering: offset X=${cx.toFixed(2)} Y=${cy.toFixed(2)}`);
+
+    setProgress(40, 'Building 3MF model XML…');
+
+    // One <object> with the mesh, N <item> entries in <build> with Z-offset transforms
+    // 3MF transform: "r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz" (col-major rotation + translation)
+    // Identity rotation = "1 0 0 0 1 0 0 0 1 tx ty tz"
+    const buildItems = [];
+    for (let i = 0; i < stackCount; i++) {
+      const tz = i * tileStep - zFloor;  // shift bottom to 0, then step up
+      const tx = cx;
+      const ty = cy;
+      buildItems.push(`  <item objectid="1" transform="1 0 0 0 1 0 0 0 1 ${tx.toFixed(6)} ${ty.toFixed(6)} ${tz.toFixed(6)}" printable="1"/>`);
+    }
+
+    const modelXml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US"
+  xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+  xmlns:BambuStudio="http://schemas.bambulab.com/package/2021"
+  xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+  requiredextensions="p">
+  <metadata name="Application">BambuStudio-02.02.02.56</metadata>
+  <metadata name="BambuStudio:3mfVersion">1</metadata>
+  <metadata name="CreationDate">${new Date().toISOString().slice(0,10)}</metadata>
+  <metadata name="Title">MultiStack - ${stackCount}x ${uploadedFile.name.replace('.stl','')}</metadata>
+  <resources>
+    <object id="1" type="model" p:UUID="${randomUUID()}">
+      <mesh>
+        <vertices>
+${vertsXml}
+        </vertices>
+        <triangles>
+${trisXml}
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+${buildItems.join('\n')}
+  </build>
+</model>`;
+
+    setProgress(70, 'Building project settings…');
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="gcode" ContentType="text/x.gcode"/>
+  <Default Extension="config" ContentType="text/xml"/>
+  <Default Extension="json" ContentType="application/json"/>
+</Types>`;
+
+    const relsXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>`;
+
+    // Minimal model_settings with one entry per instance
+    const instanceSettings = Array.from({length: stackCount}, (_,i) => `
+  <object identify_id="${i+1}" id="${i+1}" name="${uploadedFile.name.replace('.stl','')} #${i+1}">
+    <metadata key="name" value="${uploadedFile.name.replace('.stl','')} #${i+1}"/>
+    <metadata key="extruder" value="1"/>
+  </object>`).join('');
+
+    const modelSettings = `<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value=""/>
+    <metadata key="locked" value="false"/>
+  </plate>
+  <assemble>
+    <assemble_item object_id="1" instance_id="0" offset_to_bottom_mm="${stlInfo.bbox.minZ.toFixed(6)}" />
+  </assemble>
+</config>`;
+
+    setProgress(85, 'Packaging .3mf archive…');
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', contentTypes);
+    zip.file('_rels/.rels', relsXml);
+    zip.file('3D/3dmodel.model', modelXml);
+    zip.file('Metadata/model_settings.config', modelSettings);
+
+    setProgress(93, 'Compressing…');
+    outputBlob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+    log(`Output: ${(outputBlob.size/1024).toFixed(0)} KB`, 'ok');
+    log('Done!', 'ok');
+    setProgress(100, 'Complete!');
+
+    const baseName = uploadedFile.name.replace(/\.stl$/i, '');
+    const outputName = `${baseName}_${stackCount}high.3mf`;
+    const url = URL.createObjectURL(outputBlob);
+    const dlBtn = document.getElementById('downloadBtn');
+    dlBtn.href = url;
+    dlBtn.download = outputName;
+
+    const totalH = (tileStep * (stackCount-1) + stlInfo.zHeight).toFixed(1);
+    document.getElementById('resultStats').innerHTML = `
+      <div class="stat"><div class="stat-label">Tiles</div><div class="stat-value">${stackCount}</div></div>
+      <div class="stat"><div class="stat-label">Tile Height</div><div class="stat-value">${stlInfo.zHeight.toFixed(1)}<span class="stat-unit">mm</span></div></div>
+      <div class="stat"><div class="stat-label">Gap</div><div class="stat-value">${gapMm.toFixed(2)}<span class="stat-unit">mm</span></div></div>
+      <div class="stat"><div class="stat-label">Total Height</div><div class="stat-value">${totalH}<span class="stat-unit">mm</span></div></div>
+      <div class="stat"><div class="stat-label">File Size</div><div class="stat-value">${(outputBlob.size/1024).toFixed(0)}<span class="stat-unit">KB</span></div></div>
+    `;
+    document.getElementById('resultArea').classList.add('visible');
+    document.getElementById('progressArea').classList.remove('visible');
+
+  } catch(err) {
+    console.error(err);
+    showError(err.message || 'Unexpected error. Check browser console.');
+    log('Error: ' + err.message, 'err');
+  }
+  document.getElementById('generateBtn').disabled = false;
+}
+
+function randomUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random()*16|0;
+    return (c==='x' ? r : (r&0x3|0x8)).toString(16);
+  });
+}
+
+// Init
+adjustCount(0);
+</script>
+</body>
+</html>
