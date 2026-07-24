@@ -155,29 +155,38 @@
         <button class="mode-btn active" id="modeGap" onclick="setMode('gap')">Air gap</button>
         <button class="mode-btn" id="modeIface" onclick="setMode('interface')">Interface layer (filament 2)</button>
       </div>
-      <div class="gap-row" id="gapRow">
-        <div class="gap-label">Inter-tile gap</div>
-        <div style="display:flex;align-items:center">
-          <button class="sm-btn" onclick="adjustGap(-1)">&#x2212;</button>
-          <input class="sm-display" id="gapDisplay" type="number" step="0.01" min="0.05" max="1.2" value="0.20" style="-moz-appearance:textfield">
-          <button class="sm-btn" onclick="adjustGap(1)">+</button>
-        </div>
-        <div style="font-size:0.68rem;color:var(--muted)">mm &nbsp;&mdash;&nbsp; match your layer height (0.20 / 0.24 / 0.30&hellip;)</div>
-      </div>
-      <div class="gap-row" id="ifaceRow" style="display:none">
+      <div class="gap-row">
         <div class="gap-label">Layer height</div>
         <div style="display:flex;align-items:center">
           <button class="sm-btn" onclick="adjustLayerH(-1)">&#x2212;</button>
           <input class="sm-display" id="layerHDisplay" type="number" step="0.01" min="0.05" max="0.6" value="0.20" style="-moz-appearance:textfield">
           <button class="sm-btn" onclick="adjustLayerH(1)">+</button>
         </div>
+        <div style="font-size:0.68rem;color:var(--muted)">mm &nbsp;&mdash;&nbsp; must match the layer height you'll slice at (0.20 / 0.24 / 0.30&hellip;)</div>
+      </div>
+      <div class="gap-row" id="gapRow">
+        <div class="gap-label">Air gap layers</div>
+        <div style="display:flex;align-items:center">
+          <button class="sm-btn" onclick="adjustGapLayers(-1)">&#x2212;</button>
+          <div class="sm-display" id="gapLayersDisplay">1</div>
+          <button class="sm-btn" onclick="adjustGapLayers(1)">+</button>
+        </div>
+        <div style="font-size:0.68rem;color:var(--muted)">empty layers between tiles, snapped to the slicing grid &mdash; 1 is the classic stack-print gap</div>
+      </div>
+      <div class="gap-row" id="ifaceRow" style="display:none">
         <div class="gap-label">Interface layers</div>
         <div style="display:flex;align-items:center">
           <button class="sm-btn" onclick="adjustIfaceLayers(-1)">&#x2212;</button>
-          <div class="sm-display" id="ifaceLayersDisplay">1</div>
+          <div class="sm-display" id="ifaceLayersDisplay">2</div>
           <button class="sm-btn" onclick="adjustIfaceLayers(1)">+</button>
         </div>
-        <div style="font-size:0.68rem;color:var(--muted)">must match the layer height you'll slice at &mdash; each interface is snapped to whole layers on the slicing grid</div>
+        <div class="gap-label">Release gap</div>
+        <div style="display:flex;align-items:center">
+          <button class="sm-btn" onclick="adjustRelease(-1)">&#x2212;</button>
+          <div class="sm-display" id="releaseDisplay">0</div>
+          <button class="sm-btn" onclick="adjustRelease(1)">+</button>
+        </div>
+        <div style="font-size:0.68rem;color:var(--muted)">layer height must match what you'll slice at &mdash; interfaces are snapped to whole layers on the slicing grid. Release gap = air layers above each interface (like support top Z distance) so the tile printed on top peels off easily; 0 = direct contact, strongest bond</div>
       </div>
     </div>
 
@@ -219,7 +228,9 @@
 // ── State ────────────────────────────────────────────────────────────────────
 let files = [];           // [{ name, buf, info, count }]
 let sepMode = 'gap';      // 'gap' | 'interface'
-let ifaceLayers = 1;
+let ifaceLayers = 2;
+let releaseLayers = 0;
+let gapLayers = 1;
 let outputBlob = null;
 const MAX_STACK = 45;
 
@@ -286,8 +297,9 @@ function readMm(id) {
   const v = parseFloat(document.getElementById(id).value);
   return isNaN(v) ? 0.20 : Math.max(0.05, Math.min(1.2, v));
 }
-function adjustGap(d) {
-  document.getElementById('gapDisplay').value = (readMm('gapDisplay') + d * 0.02).toFixed(2);
+function adjustGapLayers(d) {
+  gapLayers = Math.max(1, Math.min(3, gapLayers + d));
+  document.getElementById('gapLayersDisplay').textContent = gapLayers;
 }
 function adjustLayerH(d) {
   document.getElementById('layerHDisplay').value = (readMm('layerHDisplay') + d * 0.02).toFixed(2);
@@ -295,6 +307,10 @@ function adjustLayerH(d) {
 function adjustIfaceLayers(d) {
   ifaceLayers = Math.max(1, Math.min(3, ifaceLayers + d));
   document.getElementById('ifaceLayersDisplay').textContent = ifaceLayers;
+}
+function adjustRelease(d) {
+  releaseLayers = Math.max(0, Math.min(2, releaseLayers + d));
+  document.getElementById('releaseDisplay').textContent = releaseLayers;
 }
 function setMode(m) {
   sepMode = m;
@@ -618,41 +634,62 @@ async function generate() {
   document.getElementById('generateBtn').disabled = true;
 
   try {
-    const gapMm = sepMode === 'gap' ? readMm('gapDisplay') : 0;
     const layerH = readMm('layerHDisplay');
+    const gapMm = sepMode === 'gap' ? gapLayers * layerH : 0;
     const ifaceMm = sepMode === 'interface' ? ifaceLayers * layerH : 0;
+    const releaseMm = sepMode === 'interface' ? releaseLayers * layerH : 0;
 
     // ── Per-file meshes ──
     const BED = 256, SPACING = 12;
     const objectsXml = [];
     const settingsXml = [];
-    const stacks = [];   // { w, d, item(x,y) fns } placement info
-    let oid = 0;
+    const stacks = [];
+    let oid = 0, tallest = 0, totalTiles = 0;
 
     files.forEach((f, fi) => {
       setProgress(5 + 40*fi/files.length, `Converting ${f.name}\u2026`);
       log(`${f.name}: ${f.info.triangles.toLocaleString()} tris, ${f.info.zHeight.toFixed(2)} mm tall, ${f.count} high`);
+      const tileName = f.name.replace('.stl','');
       const tileId = ++oid;
       const m = stlToMeshXml(f.buf, f.info.isBinary);
       objectsXml.push(`    <object id="${tileId}" type="model" p:UUID="${randomUUID()}">\n      <mesh>\n        <vertices>\n${m.vertsXml}\n        </vertices>\n        <triangles>\n${m.trisXml}\n        </triangles>\n      </mesh>\n    </object>`);
-      settingsXml.push(`  <object id="${tileId}">\n    <metadata key="name" value="${f.name.replace('.stl','')}"/>\n    <metadata key="extruder" value="1"/>\n  </object>`);
 
-      let ifaceId = null, pad = 0;
+      // snap: everything above the tile top starts on the next slicing-grid line,
+      // so gaps/interfaces occupy exactly whole layers and every tile starts on grid
+      const pad = f.count > 1 ? Math.ceil(f.info.zHeight / layerH - 1e-6) * layerH - f.info.zHeight : 0;
+      if (pad > 1e-6) log(`${f.name}: tile height ${f.info.zHeight.toFixed(2)} isn't a multiple of ${layerH.toFixed(2)} — adding ${pad.toFixed(3)} mm to align tile boundaries to the layer grid`, 'warn');
+
+      let ifaceId = null;
       if (sepMode === 'interface' && f.count > 1) {
         ifaceId = ++oid;
-        // snap: interface starts on the next slicing-grid line above the tile top,
-        // so it always occupies exactly N whole layers → solid interface everywhere
-        pad = Math.ceil(f.info.zHeight / layerH - 1e-6) * layerH - f.info.zHeight;
-        if (pad > 1e-6) log(`${f.name}: tile height ${f.info.zHeight.toFixed(2)} isn't a multiple of ${layerH.toFixed(2)} — adding ${pad.toFixed(3)} mm air below each interface to align it to the layer grid`, 'warn');
         const zRef = f.info.bbox.minZ + f.info.zHeight * 0.45;   // mid-body: full footprint
         const im = crossSectionMeshXml(f.buf, f.info.isBinary, zRef, ifaceMm);
         log(`${f.name}: interface footprint from cross-section at z=${(zRef - f.info.bbox.minZ).toFixed(2)} mm (${im.loops} contours)`, 'ok');
         objectsXml.push(`    <object id="${ifaceId}" type="model" p:UUID="${randomUUID()}">\n      <mesh>\n        <vertices>\n${im.vertsXml}\n        </vertices>\n        <triangles>\n${im.trisXml}\n        </triangles>\n      </mesh>\n    </object>`);
-        settingsXml.push(`  <object id="${ifaceId}">\n    <metadata key="name" value="${f.name.replace('.stl','')} interface"/>\n    <metadata key="extruder" value="2"/>\n  </object>`);
       }
 
+      // one native multi-part assembly per stack: components at fixed relative z.
+      // Its lowest point is z=0, so Studio's drop-to-plate can never shift parts,
+      // and no "multi-part object detected" dialog appears on import.
+      const step = f.info.zHeight + gapMm + pad + ifaceMm + releaseMm;
+      const asmId = ++oid;
+      const comps = [];
+      for (let i = 0; i < f.count; i++) {
+        comps.push(`        <component objectid="${tileId}" p:UUID="${randomUUID()}" transform="1 0 0 0 1 0 0 0 1 0 0 ${(i * step - f.info.bbox.minZ).toFixed(6)}"/>`);
+        if (ifaceId && i < f.count - 1) {
+          comps.push(`        <component objectid="${ifaceId}" p:UUID="${randomUUID()}" transform="1 0 0 0 1 0 0 0 1 0 0 ${(i * step + f.info.zHeight + pad).toFixed(6)}"/>`);
+        }
+      }
+      objectsXml.push(`    <object id="${asmId}" type="model" p:UUID="${randomUUID()}">\n      <components>\n${comps.join('\n')}\n      </components>\n    </object>`);
+
+      const ifacePart = ifaceId ? `\n    <part id="${ifaceId}" subtype="normal_part">\n      <metadata key="name" value="${tileName} interface"/>\n      <metadata key="extruder" value="2"/>\n      <metadata key="ironing_type" value="no ironing"/>\n      <metadata key="outer_wall_speed" value="80"/>\n      <metadata key="inner_wall_speed" value="80"/>\n      <metadata key="internal_solid_infill_speed" value="80"/>\n      <metadata key="top_surface_speed" value="80"/>\n    </part>` : '';
+      settingsXml.push(`  <object id="${asmId}">\n    <metadata key="name" value="${tileName} stack"/>\n    <metadata key="extruder" value="1"/>\n    <part id="${tileId}" subtype="normal_part">\n      <metadata key="name" value="${tileName}"/>\n      <metadata key="extruder" value="1"/>\n    </part>${ifacePart}\n  </object>`);
+
+      totalTiles += f.count;
+      tallest = Math.max(tallest, step * (f.count - 1) + f.info.zHeight);
+
       stacks.push({
-        f, tileId, ifaceId, pad,
+        f, asmId,
         w: f.info.bbox.maxX - f.info.bbox.minX,
         d: f.info.bbox.maxY - f.info.bbox.minY,
       });
@@ -672,27 +709,18 @@ async function generate() {
     if (maxW > BED || totalD > BED) log(`Arrangement is ${maxW.toFixed(0)}\u00d7${totalD.toFixed(0)} mm \u2014 may exceed your plate, check in BambuStudio`, 'warn');
     const ox = (BED - maxW) / 2, oy = (BED - totalD) / 2;   // center the whole layout
 
-    // ── Build items ──
+    // ── Build items: one per stack ──
     const buildItems = [];
-    let tallest = 0, totalTiles = 0;
+    const assembleItems = [];
     stacks.forEach(s => {
       const info = s.f.info;
-      const step = info.zHeight + gapMm + s.pad + ifaceMm;
       const cx = ox + s.x - info.bbox.minX;
       const cy = oy + s.y - info.bbox.minY;
-      for (let i = 0; i < s.f.count; i++) {
-        const tz = i * step - info.bbox.minZ;
-        buildItems.push(`  <item objectid="${s.tileId}" transform="1 0 0 0 1 0 0 0 1 ${cx.toFixed(6)} ${cy.toFixed(6)} ${tz.toFixed(6)}" printable="1"/>`);
-        if (s.ifaceId && i < s.f.count - 1) {
-          const iz = i * step + info.zHeight + s.pad;
-          buildItems.push(`  <item objectid="${s.ifaceId}" transform="1 0 0 0 1 0 0 0 1 ${cx.toFixed(6)} ${cy.toFixed(6)} ${iz.toFixed(6)}" printable="1"/>`);
-        }
-      }
-      totalTiles += s.f.count;
-      tallest = Math.max(tallest, step * (s.f.count - 1) + info.zHeight);
+      buildItems.push(`  <item objectid="${s.asmId}" transform="1 0 0 0 1 0 0 0 1 ${cx.toFixed(6)} ${cy.toFixed(6)} 0" printable="1"/>`);
+      assembleItems.push(`    <assemble_item object_id="${s.asmId}" instance_id="0" offset_to_bottom_mm="0"/>`);
     });
-    if (sepMode === 'gap') log(`Gap: ${gapMm.toFixed(2)} mm between tiles`, 'ok');
-    else log(`Interface: ${ifaceMm.toFixed(2)} mm in filament 2 between tiles`, 'ok');
+    if (sepMode === 'gap') log(`Air gap: ${gapLayers} layer(s) = ${gapMm.toFixed(2)} mm between tiles, on the slicing grid`, 'ok');
+    else log(`Interface: ${ifaceMm.toFixed(2)} mm in filament 2 between tiles${releaseMm > 0 ? ` + ${releaseMm.toFixed(2)} mm release gap above` : ''}`, 'ok');
     log(`${files.length} stack(s), ${totalTiles} tiles, tallest ${tallest.toFixed(1)} mm`, 'ok');
 
     setProgress(60, 'Building 3MF model XML\u2026');
@@ -739,6 +767,9 @@ ${settingsXml.join('\n')}
     <metadata key="plater_name" value=""/>
     <metadata key="locked" value="false"/>
   </plate>
+  <assemble>
+${assembleItems.join('\n')}
+  </assemble>
 </config>`;
 
     setProgress(85, 'Packaging .3mf archive…');
